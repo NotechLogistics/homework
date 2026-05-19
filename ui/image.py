@@ -1,338 +1,436 @@
 import pygame
 import pygame.freetype
 from pygame.locals import *
+from functools import lru_cache
+from pathlib import Path
+from typing import Optional, Tuple, List, Union
 
+# ---------- 全局常量 ----------
 FONT_PATH = {
     "黑体": "assets/font/黑体.ttf",
     "arial": "assets/font/arial.ttf",
 }
 
-TRANSPARENT = (0,0,0,0)
-BLACK = (0,0,0)
+TRANSPARENT = (0, 0, 0, 0)
+BLACK = (0, 0, 0)
 BLUE = (52, 72, 120)
 GREEN = (25, 149, 0)
-RED = (255,0,0)
-WHITE=(255,255,255)
+RED = (255, 0, 0)
+WHITE = (255, 255, 255)
 
-class Image(pygame.sprite.Sprite):
-    def __init__(self, surface, pos=None,size=None,
-                 x=None, y=None, width=None, height=None):
-        self.image = surface
-        self.rect = self.image.get_rect()
-        self.rect = self.set_rect(pos =pos,size = size,x = x, y = y, width = width, height = height)
+# ---------- 简单图片加载函数（无状态） ----------
+def load_image(path: str, size: Optional[Tuple[int, int]] = None) -> pygame.Surface:
+    """加载图片，可选缩放（仅在加载时缩放一次）"""
+    try:
+        surf = pygame.image.load(path).convert_alpha()
+    except FileNotFoundError:
+        # 创建一个占位表面，避免崩溃
+        surf = pygame.Surface((50, 50), pygame.SRCALPHA)
+        surf.fill((255, 0, 255, 255))  # 品红色错误提示
+        print(f"警告: 图片不存在 {path}")
+    if size:
+        surf = pygame.transform.smoothscale(surf, size)
+    return surf
 
-        self.isavailable = True
-        self.isvisible = True
+def create_transparent_surface(size: Tuple[int, int], color: Tuple[int, int, int, int] = TRANSPARENT) -> pygame.Surface:
+    """创建带透明通道的表面"""
+    surf = pygame.Surface(size, pygame.SRCALPHA)
+    surf.fill(color)
+    return surf
 
-    def set_rect(self, pos=None,size=None,x=None, y=None,center=False, width=None, height=None):
-        rect = self.image.get_rect()
-        rect = self.set_pos(rect, pos,x,y,center)
-        rect = self.set_size(rect,size,width,height)
-        self.rect = rect
-        return rect
-    def surface_update(self,rect):
-        self.image = pygame.transform.scale(self.image, rect.size)
-    def set_pos(self,rect = None, pos = None,x = None,y = None,center=False):
-        if rect == None:
-            rect = self.rect
-        if center:
-            if pos:
-                rect.center = pos
-            elif x != None and y != None:
-                rect.center = (x, y)
-            elif x != None:
-                rect.centerx = x
-            elif y != None:
-                rect.centery = y
+# ---------- 文本渲染（带缓存） ----------
+class TextRenderer:
+    """文本渲染器，内部缓存渲染结果，提高性能"""
+    @staticmethod
+    @lru_cache(maxsize=128)
+    def render(
+        text: str,
+        font_style: str,
+        font_size: int,
+        color: Tuple[int, int, int],
+        background: Tuple[int, int, int, int] = TRANSPARENT,
+        stroke_size: int = 0,
+        stroke_color: Tuple[int, int, int, int] = TRANSPARENT,
+        underline: bool = False,
+        strong: bool = False,
+        oblique: bool = False,
+        vertical: bool = False,
+    ) -> pygame.Surface:
+        """
+        渲染一行文字（无换行），支持描边、下划线等样式。
+        返回带有透明通道的 Surface。
+        """
+        pygame.freetype.init()
+        font_path = FONT_PATH.get(font_style, None)
+        if not font_path or not Path(font_path).exists():
+            # 回退到默认字体
+            font = pygame.freetype.Font(None, font_size)
         else:
-            if pos:
-                rect.topleft = pos
-            elif x != None and y != None:
-                rect.topleft = (x, y)
-            elif x != None:
-                rect.x = x
-            elif y != None:
-                rect.y = y
-        self.rect = rect
-        return rect
-    def set_size(self, rect=None,size = None,width = None,height = None):
-        if rect == None:
-            rect = self.rect
-        if size:
-            rect.size = size
-        elif width != None and height != None:
-            rect.size = (width, height)
-        elif width != None and height == None:
-            rect.height = rect.height * (width / rect.width)
-            rect.width = width
-        elif height != None and width == None:
-            rect.width = rect.width * (height / rect.height)
-            rect.height = height
-        self.rect = rect
-        self.surface_update(self.rect)
-        return rect
-    def move(self, dx=0, dy=0):
-        return self.rect.move(dx, dy)
-    def inflate(self, dx=0, dy=0):
-        return self.rect.inflate(dx, dy)
-    def draw(self, screen,rect = None,pos = None,x = None,y = None,center=False,size = None,width = None,height = None):
-        if self.isvisible:
-            if  pos or x != None or y != None or size or width != None or height != None:
-                self.rect = self.set_rect(pos,size,x,y,center,width,height)
-            elif rect:
-                self.rect = rect
-            self.surface_update(self.rect)
-            screen.blit(self.image, self.rect)
-    def is_clicked(self, event,father_pos = (0,0)):
-        if event.type == pygame.MOUSEBUTTONDOWN:
-            if event.button in (4,5):
-                return
-            if not self.isavailable:
-                return
-            rect = self.rect.move(father_pos)
-            return rect.collidepoint(event.pos)
-    def is_hovering(self, event,father_pos = (0,0)):
-        if event.type == pygame.MOUSEMOTION:
-            if not self.isavailable:
-                return
-            rect = self.rect.move(father_pos)
-            return rect.collidepoint(event.pos)
+            font = pygame.freetype.Font(font_path, font_size)
 
-def imageLoad(path,size = None,width = None,height = None):
-    surface = pygame.image.load(path)
-    return Image(surface,size=size,width=width,height=height)
+        # 设置样式
+        font.underline = underline
+        font.strong = strong
+        font.oblique = oblique
+        font.vertical = vertical
 
-def createTansparent(size,rbga = (0,0,0,0)):
-    surface = pygame.Surface(size, pygame.SRCALPHA)  # 创建透明背景
-    surface.fill(rbga)  # 填充透明背景
-    return Image(surface,size=size)
+        # 先渲染普通文本，获取尺寸
+        rendered, rect = font.render(text, color)
+        if stroke_size <= 0:
+            # 无描边，直接返回
+            if background != TRANSPARENT:
+                # 带背景
+                final = create_transparent_surface(rect.size, background)
+                final.blit(rendered, (0, 0))
+                return final
+            return rendered
 
-def createFrame(image,color,size):
-    """
-    绘制边框
-    :param image: 画布
-    :param color: 边框颜色
-    :param size: 边框粗细
-    :return: 带边框的图片 -> Image
-    """
-    surface = createTansparent(image.rect.inflate(2*size,2*size).size)
-    image.draw(surface.image, pos=(size, size))
-    pygame.draw.rect(surface.image, color, surface.rect, size)
-    return surface
+        # 有描边：创建一个稍大的表面，绘制8个方向的偏移文本 + 中心文本
+        size = (rect.width + 2 * stroke_size, rect.height + 2 * stroke_size)
+        final = create_transparent_surface(size, background)
+        center_pos = (stroke_size, stroke_size)  # 文本在final中的位置
 
-class Text:
+        # 偏移方向 (dx, dy)
+        directions = [
+            (-stroke_size, -stroke_size), (-stroke_size, 0), (-stroke_size, stroke_size),
+            (0, -stroke_size), (0, stroke_size),
+            (stroke_size, -stroke_size), (stroke_size, 0), (stroke_size, stroke_size)
+        ]
+        # 绘制描边文本
+        stroke_text, _ = font.render(text, stroke_color)
+        for dx, dy in directions:
+            final.blit(stroke_text, (center_pos[0] + dx, center_pos[1] + dy))
+        # 绘制中心文本
+        final.blit(rendered, center_pos)
+        return final
+
     @staticmethod
-    def strong(font):
-        font.strong = True
-        return font
-    @staticmethod
-    def oblique(font):
-        font.oblique = True
-        return font
-    @staticmethod
-    def underline(font):
-        font.underline = True
-        return font
-    @staticmethod
-    def vertical(font):
-        font.vertical = True
-        return font
-    @staticmethod
-    def frame(image,frame_size,frame_color):
-        return createFrame(image,frame_color,frame_size)
-    @staticmethod
-    def stroking(image,text,font,stroking_color,stroking_size):
-        _ = Image(font.render(text,stroking_color)[0])
-        _.draw(image.image, pos = image.move(stroking_size, 0).center, center=True)
-        _.draw(image.image, pos = image.move(0, -stroking_size).center, center=True)
-        _.draw(image.image, pos = image.move(-stroking_size, 0).center, center=True)
-        _.draw(image.image, pos = image.move(0, stroking_size).center, center=True)
-        _.draw(image.image, pos=image.move(-stroking_size, -stroking_size).center, center=True)
-        _.draw(image.image, pos=image.move(stroking_size, stroking_size).center, center=True)
-        _.draw(image.image, pos=image.move(stroking_size, -stroking_size).center, center=True)
-        _.draw(image.image, pos=image.move(-stroking_size, stroking_size).center, center=True)
-        return image
-    @staticmethod
-    def wrap(text, font, max_width):
+    def wrap_text(text: str, font: pygame.freetype.Font, max_width: int) -> List[str]:
+        """
+        将长文本按最大宽度换行，返回行列表。
+        简单的贪心算法，不考虑标点避头尾，但已足够稳定。
+        """
         lines = []
+        words = list(text)  # 按字符切分（适合中文），如需英文按空格可另做处理
         current_line = []
-        last_line = []
         current_width = 0
-        # 预计算常用标点符号
-        punctuation = {'，', '。', '！', '？', '、', '；', '：', '”', '）', '》', '…'}
-        for char in text:
-            if char == "\n":
-                lines.append(''.join(current_line))
-                current_line = []
-                current_width = 0
-                continue
-            # 获取字符宽度（考虑中英文字体差异）
-            char_width = font.get_metrics(char)[0][4]
-            _ = font.render(char)
-            # 处理换行条件
-            current_line.append(char)
-            current_width += char_width
-            if current_width >= max_width:
 
-                if last_line and current_line == last_line:
-                    lines.append(''.join(current_line))
-                    current_line = []
-                    last_line = []
-                    current_width = 0
-                    continue
-                if char in punctuation:
-                    if current_width - max_width >= char_width/2:
-                        lines.append(''.join(current_line))
-                        current_line = []
-                        current_width = 0
-                    else:
-                        last_line = [current_line.pop(-2), current_line.pop(-1)]
-                        if current_line:
-                            lines.append(''.join(current_line))
-                        current_line = last_line[::]
-                        current_width = sum(map(lambda x: font.get_rect(x).width, last_line))
-                else:
-                    last_line = [current_line.pop(-1)]
-                    lines.append(''.join(current_line))
-                    current_line = last_line[::]
-                    current_width = sum(map(lambda x: font.get_rect(x).width, last_line))
+        for ch in words:
+            char_width = font.get_metrics(ch)[0][4]  # advance 宽度
+            if current_width + char_width <= max_width:
+                current_line.append(ch)
+                current_width += char_width
+            else:
+                # 换行
+                lines.append(''.join(current_line))
+                current_line = [ch]
+                current_width = char_width
         if current_line:
             lines.append(''.join(current_line))
         return lines
 
-
-def createText(text,font_style,color,size,
-               stroking_size=0,stroking_color=TRANSPARENT,
-               frame_size=0,frame_color=TRANSPARENT,
-               margins=2, background_color = TRANSPARENT,
-               vertical = False,strong = False,oblique = False,underline = False,
-               iswarp = False,width = None,line_height = 1.2):
-    pygame.freetype.init()
-    font = pygame.freetype.Font(FONT_PATH[font_style], size)
-    if vertical:
-        font = Text.vertical(font)
-    if strong:
-        font = Text.strong(font)
-    if oblique:
-        font = Text.oblique(font)
-    if underline:
-        font = Text.underline(font)
-    if iswarp and width:
-        text = Text.wrap(text, font, width)
-        line_height = int(font.get_sized_height() * line_height)
-        height = line_height*len(text)
-        y = 0
-        text_surface = createTansparent((2*(stroking_size+margins)+width,2*(stroking_size+margins)+height),background_color)
-        for line in text:
-            _ = Image(font.render(line, color)[0])
-            _.rect = _.set_pos(_.rect,x = 0,y = y)
-            if stroking_size > 0:
-                text_surface = Text.stroking(text_surface,line,font,stroking_color,stroking_size)
-            _.draw(text_surface.image, pos = (margins, y + margins))
-            y += line_height
-    else:
-        _ = Image(font.render(text, color)[0])
-        text_surface = createTansparent(_.inflate(2*(stroking_size+margins),2*(stroking_size+margins)).size,background_color)
-        if stroking_size > 0:
-            text_surface = Text.stroking(text_surface,text,font,stroking_color,stroking_size)
-        _.draw(text_surface.image, pos = text_surface.rect.center, center=True)
-    if frame_size > 0:
-        text_surface = Text.frame(text_surface,frame_size,frame_color)
-    return text_surface
-
-class Button(Image):
-    def  __init__(self, text , size = None , width = None, height = None, font_size = 16,
-                font_style = "黑体",color = BLACK,margins=2,vertical = False,strong = False):
-        self.text = text
-        self.font_size = font_size
-        self.font_style = font_style
-        self.color = color
-        self.margins = margins
-        self.vertical = vertical
-        self.strong = strong
-        #创建字体
-        self.text_image = createText(text,font_style,color,font_size,margins=margins,vertical=vertical,strong=strong)
-        #导入背景图片并初始化
-        if not (size or width or height):
-            size = self.text_image.rect.size
-        self.background = imageLoad("assets/images/board.png",size,width,height)
-        super().__init__(createTansparent(size).image)
-        self.background.draw(self.image)
-        #绘制字体
-        self.text_image.draw(self.image,pos=self.rect.center,center=True)
-    def update(self):
-        self.image.fill(TRANSPARENT)
-        self.background.draw(self.image)
-        self.text_image.draw(self.image, pos=self.background.rect.center, center=True)
-
-
-
-class ScrollBar(Image):
-    def __init__(self, size, bg_color=(0, 0, 0, 0), bg_image=None , scroll_offset = 20 , isHorizontal = False):
-        super().__init__(createTansparent(size).image)          # 创建初始化背景
-        self.background = imageLoad(bg_image) if bg_image else createTansparent(size,bg_color)         # 创建背景图片
-        self.images = []
-        self.isHorizontal = isHorizontal          # 是否为水平滚动
-        self.top = 0                 # 顶部位置,左侧
-        self.end = self.rect.width if isHorizontal else self.rect.height          # 底部位置，右侧
-        self.scroll_offset = scroll_offset          #单次滚动偏移量
-        self.offset = 0          # 偏移量
-        self.max = 0            # 最大坐标
-        self.min = 0                # 最小坐标
-    def add(self, image:Image,pos,isavailable=True):
-        image.rect = image.set_pos(image.rect,pos = pos)
-        image.isavailable = isavailable
-        self.images.append(image)
-    def is_scroll(self,event):
-        if event.type == pygame.MOUSEWHEEL:
-            self.change_offset(event.y)
-    def change_offset(self,event):
-        self.offset = self.scroll_offset  # 偏移量
-        if event < 0:  # 向下滚动
-            self.offset = -self.offset
-        if self.isHorizontal:
-            self.max = max([image.rect.bottomright[0] for image in self.images])
-            self.min = min([image.rect.bottomleft[0] for image in self.images])
-            if self.min +self.offset > self.top:
-                # 左侧判定
-                _ = self.top - (self.min)
-                self.offset = _ if _ > 0 else 0  # 补齐偏移量
-            elif self.max + self.offset < self.end:
-                # 右侧判定
-                _ = self.end - (self.max)
-                self.offset = _ if _ < 0 else 0  # 补齐偏移量
+    @classmethod
+    def render_wrapped(
+        cls,
+        text: str,
+        font_style: str,
+        font_size: int,
+        color: Tuple[int, int, int],
+        max_width: int,
+        line_spacing: float = 1.2,
+        background: Tuple[int, int, int, int] = TRANSPARENT,
+        stroke_size: int = 0,
+        stroke_color: Tuple[int, int, int, int] = TRANSPARENT,
+        **kwargs
+    ) -> pygame.Surface:
+        """
+        渲染自动换行的文本块。
+        :param max_width: 每行最大宽度（像素）
+        :param line_spacing: 行距系数，1.0为单倍行距
+        :return: 包含多行文本的 Surface
+        """
+        pygame.freetype.init()
+        font_path = FONT_PATH.get(font_style, None)
+        if not font_path or not Path(font_path).exists():
+            font = pygame.freetype.Font(None, font_size)
         else:
-            self.max = max([image.rect.bottomleft[1] for image in self.images])
-            self.min = min([image.rect.topleft[1] for image in self.images])
-            if self.min + self.offset > self.top:
-                # 顶部判定
-                _ = self.top - (self.min)
-                self.offset = _ if _ > 0 else 0  # 补齐偏移量
-            elif self.max + self.offset < self.end:
-                # 底部判定
-                _ = self.end - (self.max)
-                self.offset = _ if _ < 0 else 0  # 补齐偏移量
-        self.update()
-        self.offset = 0
-    def update(self):
-        self.image.fill(TRANSPARENT)
-        self.background.draw(self.image)
-        for image in self.images:
-            if self.isHorizontal:
-                image.rect.x += self.offset
-                if  image.rect.x > self.end or image.rect.topright[0] < self.top:
-                    image.isavailable = False
-                else:
-                    image.isavailable = True
-            else:
-                image.rect.y += self.offset
-                if image.rect.y > self.end or image.rect.bottomleft[1] < self.top:
-                    image.isavailable = False
-                else:
-                    image.isavailable = True
-            image.draw(self.image)
-    def draw(self, screen,rect = None,pos = None,x = None,y = None,center=False,size = None,width = None,height = None):
-        super().draw(screen,rect,pos,x,y,center,size,width,height)
-        self.update()
+            font = pygame.freetype.Font(font_path, font_size)
 
+        lines = cls.wrap_text(text, font, max_width)
+        line_height = int(font.get_sized_height() * line_spacing)
+        total_height = line_height * len(lines)
+        surface = create_transparent_surface((max_width, total_height), background)
 
+        y = 0
+        for line in lines:
+            # 渲染单行
+            line_surf = cls.render(
+                line, font_style, font_size, color,
+                background=TRANSPARENT,
+                stroke_size=stroke_size,
+                stroke_color=stroke_color,
+                **kwargs
+            )
+            # 水平居中（可选，这里左对齐，可以改为居中）
+            x = 0
+            surface.blit(line_surf, (x, y))
+            y += line_height
+        return surface
+
+# ---------- 基础 UI 元素 ----------
+class UIElement:
+    """所有 UI 元素的基类，处理位置、可见性、点击检测"""
+    def __init__(self, surface: pygame.Surface, x: int = 0, y: int = 0):
+        self.image = surface
+        self.rect = surface.get_rect(topleft=(x, y))
+        self.visible = True
+        self.enabled = True
+
+    def draw(self, screen: pygame.Surface, offset_x: int = 0, offset_y: int = 0):
+        """绘制自身，支持父容器偏移"""
+        if self.visible:
+            screen.blit(self.image, (self.rect.x + offset_x, self.rect.y + offset_y))
+
+    def handle_event(self, event: pygame.event.Event, offset_x: int = 0, offset_y: int = 0) -> bool:
+        """
+        处理鼠标事件，返回是否命中（用于事件冒泡）
+        子类可重写。
+        """
+        if not self.enabled:
+            return False
+        if event.type == MOUSEBUTTONDOWN and event.button == 1:  # 左键
+            global_pos = (event.pos[0] - offset_x, event.pos[1] - offset_y)
+            if self.rect.collidepoint(global_pos):
+                self.on_click()
+                return True
+        return False
+
+    def on_click(self):
+        """点击回调，子类重写"""
+        pass
+
+    def set_position(self, x: int, y: int):
+        self.rect.topleft = (x, y)
+
+    def set_center(self, x: int, y: int):
+        self.rect.center = (x, y)
+
+class Button(UIElement):
+    """带文本的按钮"""
+    def __init__(
+        self,
+        text: str,
+        x: int = 0,
+        y: int = 0,
+        font_style: str = "黑体",
+        font_size: int = 20,
+        text_color: Tuple[int, int, int] = BLACK,
+        bg_image_path: str = "assets/images/board.png",
+        padding: int = 10,
+    ):
+        # 渲染文本
+        text_surf = TextRenderer.render(text, font_style, font_size, text_color)
+        # 加载背景图片，尺寸适配文本 + 内边距
+        bg_surf = load_image(bg_image_path)
+        width = text_surf.get_width() + 2 * padding
+        height = text_surf.get_height() + 2 * padding
+        if bg_surf.get_size() != (width, height):
+            bg_surf = pygame.transform.smoothscale(bg_surf, (width, height))
+
+        # 合成最终按钮表面
+        final = bg_surf.copy()
+        text_x = (width - text_surf.get_width()) // 2
+        text_y = (height - text_surf.get_height()) // 2
+        final.blit(text_surf, (text_x, text_y))
+
+        super().__init__(final, x, y)
+        self.callback = None
+
+    def on_click(self):
+        if self.callback:
+            self.callback()
+
+    def set_callback(self, callback):
+        self.callback = callback
+
+class ScrollView(UIElement):
+    """
+    可滚动区域，包含多个子 UIElement。
+    修复了原版坐标永久漂移的问题：子控件的 rect 保持原始逻辑位置，
+    滚动时只改变绘制偏移量，可见性通过裁剪判断。
+    """
+    def __init__(
+        self,
+        view_size: Tuple[int, int],
+        x: int = 0,
+        y: int = 0,
+        bg_color: Tuple[int, int, int, int] = (200, 200, 200, 255),
+        scroll_speed: int = 20,
+        horizontal: bool = False,
+    ):
+        """
+        :param view_size: 滚动区域的视口大小 (width, height)
+        :param scroll_speed: 鼠标滚轮每次滚动偏移像素
+        :param horizontal: 是否水平滚动
+        """
+        # 创建一个视口表面，作为滚动区域的“窗口”
+        self.viewport = create_transparent_surface(view_size, bg_color)
+        super().__init__(self.viewport, x, y)
+        self.children: List[UIElement] = []          # 所有子控件（逻辑坐标，相对于内容区域原点）
+        self.scroll_offset = 0                       # 当前滚动偏移量（正数表示向下/右滚动）
+        self.scroll_speed = scroll_speed
+        self.horizontal = horizontal
+        self.content_size: Optional[Tuple[int, int]] = None   # 内容总尺寸，在 add 后自动计算
+
+    def add(self, child: UIElement, local_x: int, local_y: int):
+        """添加子控件，local_x, local_y 是相对于内容区域左上角的位置"""
+        child.set_position(local_x, local_y)
+        self.children.append(child)
+        self._update_content_size()
+
+    def _update_content_size(self):
+        """计算所有子控件占据的总尺寸"""
+        if not self.children:
+            self.content_size = self.viewport.get_size()
+            return
+        max_x = max(c.rect.right for c in self.children)
+        max_y = max(c.rect.bottom for c in self.children)
+        self.content_size = (max(max_x, self.viewport.get_width()), max(max_y, self.viewport.get_height()))
+
+    def handle_event(self, event: pygame.event.Event, offset_x: int = 0, offset_y: int = 0) -> bool:
+        """处理滚动事件及子控件事件，注意偏移叠加"""
+        if not self.enabled or not self.visible:
+            return False
+
+        # 处理滚轮事件
+        if event.type == pygame.MOUSEWHEEL:
+            # 注意 event.y: 正为上滚，负为下滚
+            delta = event.y * self.scroll_speed
+            new_offset = self.scroll_offset - delta if not self.horizontal else self.scroll_offset - delta
+            # 限制滚动范围
+            max_offset = 0
+            if self.horizontal and self.content_size:
+                max_offset = max(0, self.content_size[0] - self.viewport.get_width())
+            elif self.content_size:
+                max_offset = max(0, self.content_size[1] - self.viewport.get_height())
+            self.scroll_offset = max(0, min(max_offset, new_offset))
+            return True   # 滚轮事件已处理
+
+        # 传递给子控件，注意子控件坐标需要减去滚动偏移
+        for child in reversed(self.children):  # 后添加的在上层
+            child_offset_x = offset_x + self.rect.x - (self.scroll_offset if self.horizontal else 0)
+            child_offset_y = offset_y + self.rect.y - (self.scroll_offset if not self.horizontal else 0)
+            if child.handle_event(event, child_offset_x, child_offset_y):
+                return True
+        return False
+
+    def draw(self, screen: pygame.Surface, offset_x: int = 0, offset_y: int = 0):
+        if not self.visible:
+            return
+        # 先清空视口表面
+        self.viewport.fill((0, 0, 0, 0))  # 完全透明，背景由外部或自己填充
+        # 绘制背景色（如果需要）
+        # 这里简单用灰色填充一下例子，实际可以设置纹理
+        self.viewport.fill((220, 220, 220))
+
+        # 遍历子控件，根据滚动偏移和视口区域进行裁剪
+        clip_rect = self.viewport.get_rect()
+        for child in self.children:
+            # 子控件在视口中的逻辑位置（相对滚动区域原点）
+            child_local_x = child.rect.x - (self.scroll_offset if self.horizontal else 0)
+            child_local_y = child.rect.y - (self.scroll_offset if not self.horizontal else 0)
+            child_rect_in_view = pygame.Rect(child_local_x, child_local_y, child.rect.width, child.rect.height)
+            if child_rect_in_view.colliderect(clip_rect):
+                # 绘制到视口表面，位置减去滚动偏移
+                self.viewport.blit(child.image, (child_local_x, child_local_y))
+        # 将视口绘制到屏幕上
+        screen.blit(self.viewport, (self.rect.x + offset_x, self.rect.y + offset_y))
+
+# ---------- 便捷函数，兼容旧版 API ----------
+def create_text(
+    text: str,
+    font_style: str,
+    color: Tuple[int, int, int],
+    size: int,
+    stroke_size: int = 0,
+    stroke_color: Tuple[int, int, int, int] = TRANSPARENT,
+    frame_size: int = 0,
+    frame_color: Tuple[int, int, int] = BLACK,
+    margins: int = 2,
+    background_color: Tuple[int, int, int, int] = TRANSPARENT,
+    vertical: bool = False,
+    strong: bool = False,
+    oblique: bool = False,
+    underline: bool = False,
+    wrap_width: Optional[int] = None,
+    line_height: float = 1.2,
+) -> UIElement:
+    """
+    创建文本控件，支持描边、边框、自动换行。
+    返回一个 UIElement，可直接绘制或添加到 ScrollView。
+    """
+    if wrap_width:
+        surf = TextRenderer.render_wrapped(
+            text, font_style, size, color, wrap_width, line_height,
+            background_color, stroke_size, stroke_color,
+            underline=underline, strong=strong, oblique=oblique, vertical=vertical
+        )
+    else:
+        surf = TextRenderer.render(
+            text, font_style, size, color, background_color,
+            stroke_size, stroke_color, underline, strong, oblique, vertical
+        )
+
+    # 添加边框
+    if frame_size > 0:
+        padded = create_transparent_surface(
+            (surf.get_width() + 2 * frame_size, surf.get_height() + 2 * frame_size),
+            background_color
+        )
+        padded.blit(surf, (frame_size, frame_size))
+        pygame.draw.rect(padded, frame_color, padded.get_rect(), frame_size)
+        surf = padded
+
+    return UIElement(surf)
+
+def create_image(path: str, size: Optional[Tuple[int, int]] = None) -> UIElement:
+    """加载图片并创建 UIElement"""
+    surf = load_image(path, size)
+    return UIElement(surf)
+
+# ---------- 使用示例 （放在 if __name__ == "__main__" 中测试）----------
+if __name__ == "__main__":
+    pygame.init()
+    screen = pygame.display.set_mode((800, 600))
+    clock = pygame.time.Clock()
+
+    # 创建滚动视图
+    scroll = ScrollView((400, 300), x=100, y=100, bg_color=(200, 200, 200, 255))
+    # 添加一些文字和按钮
+    text_elem = create_text(
+        "这是一个很长的文本示例，用来测试自动换行功能。我们希望这段文字能够在滚动区域内正确显示并且支持鼠标滚轮。",
+        "黑体", BLACK, 20,
+        wrap_width=380,
+        background_color=(255, 255, 255, 200),
+        stroke_size=1,
+        stroke_color=(0,0,0,100)
+    )
+    scroll.add(text_elem, 10, 10)
+
+    btn = Button("点我", font_size=18, bg_image_path="assets/images/board.png")
+    btn.set_callback(lambda: print("按钮被点击"))
+    scroll.add(btn, 10, 100)
+
+    running = True
+    while running:
+        for event in pygame.event.get():
+            if event.type == QUIT:
+                running = False
+            scroll.handle_event(event)  # 传递事件给滚动区域
+
+        screen.fill((150, 150, 150))
+        scroll.draw(screen)
+        pygame.display.flip()
+        clock.tick(60)
+
+    pygame.quit()
