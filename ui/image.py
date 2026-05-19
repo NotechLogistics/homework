@@ -4,6 +4,7 @@ from pygame.locals import *
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional, Tuple, List, Union
+from time import time
 
 # ---------- 全局常量 ----------
 FONT_PATH = {
@@ -180,11 +181,18 @@ class TextRenderer:
 # ---------- 基础 UI 元素 ----------
 class UIElement:
     """所有 UI 元素的基类，处理位置、可见性、点击检测"""
-    def __init__(self, surface: pygame.Surface, x: int = 0, y: int = 0):
+    def __init__(self, surface: pygame.Surface, x: int = 0, y: int = 0, z: int = 0):
+        """
+        :param surface: 图片表面
+        :param x: 左上角 x 坐标
+        :param y: 左上角 y 坐标
+        :param z: 层级（越大越靠前）
+        """
         self.image = surface
         self.rect = surface.get_rect(topleft=(x, y))
         self.visible = True
         self.enabled = True
+        self.z = z
 
     def draw(self, screen: pygame.Surface, offset_x: int = 0, offset_y: int = 0):
         """绘制自身，支持父容器偏移"""
@@ -227,7 +235,19 @@ class Button(UIElement):
         text_color: Tuple[int, int, int] = BLACK,
         bg_image_path: str = "assets/images/board.png",
         padding: int = 10,
+        z: int = 0,
     ):
+        """
+        :param text: 按钮文本
+        :param x: 左上角 x 坐标
+        :param y: 左上角 y 坐标
+        :param font_style: 字体样式
+        :param font_size: 字体大小
+        :param text_color: 字体颜色
+        :param bg_image_path: 背景图片路径，图片会被缩放以适应文本尺寸 + 内边距
+        :param padding: 文本与按钮边缘的内边距 
+        :param z: 层级（越大越靠前）
+        """
         # 渲染文本
         text_surf = TextRenderer.render(text, font_style, font_size, text_color)
         # 加载背景图片，尺寸适配文本 + 内边距
@@ -243,7 +263,7 @@ class Button(UIElement):
         text_y = (height - text_surf.get_height()) // 2
         final.blit(text_surf, (text_x, text_y))
 
-        super().__init__(final, x, y)
+        super().__init__(final, x, y, z)
         self.callback = None
 
     def on_click(self):
@@ -270,6 +290,8 @@ class ScrollView(UIElement):
     ):
         """
         :param view_size: 滚动区域的视口大小 (width, height)
+        :param x: 滚动区域左上角 x 坐标
+        :param y: 滚动区域左上角 y 坐标
         :param scroll_speed: 鼠标滚轮每次滚动偏移像素
         :param horizontal: 是否水平滚动
         """
@@ -302,22 +324,21 @@ class ScrollView(UIElement):
         if not self.enabled or not self.visible:
             return False
 
-        # 处理滚轮事件
+        # 滚轮事件依然由 ScrollView 自己优先处理
         if event.type == pygame.MOUSEWHEEL:
-            # 注意 event.y: 正为上滚，负为下滚
             delta = event.y * self.scroll_speed
             new_offset = self.scroll_offset - delta if not self.horizontal else self.scroll_offset - delta
-            # 限制滚动范围
             max_offset = 0
             if self.horizontal and self.content_size:
                 max_offset = max(0, self.content_size[0] - self.viewport.get_width())
             elif self.content_size:
                 max_offset = max(0, self.content_size[1] - self.viewport.get_height())
             self.scroll_offset = max(0, min(max_offset, new_offset))
-            return True   # 滚轮事件已处理
+            return True
 
-        # 传递给子控件，注意子控件坐标需要减去滚动偏移
-        for child in reversed(self.children):  # 后添加的在上层
+        # 按 z 降序排序，同 z 则按添加顺序（保持稳定）
+        sorted_children = sorted(self.children, key=lambda c: c.z, reverse=True)
+        for child in sorted_children:
             child_offset_x = offset_x + self.rect.x - (self.scroll_offset if self.horizontal else 0)
             child_offset_y = offset_y + self.rect.y - (self.scroll_offset if not self.horizontal else 0)
             if child.handle_event(event, child_offset_x, child_offset_y):
@@ -368,6 +389,23 @@ def create_text(
     """
     创建文本控件，支持描边、边框、自动换行。
     返回一个 UIElement，可直接绘制或添加到 ScrollView。
+    :param text: 文本内容
+    :param font_style: 字体样式，如 "黑体"
+    :param color: 字体颜色，如 (0, 0, 0)
+    :param size: 字体大小
+    :param stroke_size: 描边大小，0 表示无描边
+    :param stroke_color: 描边颜色
+    :param frame_size: 边框大小，0 表示无边框
+    :param frame_color: 边框颜色
+    :param margins: 内边距
+    :param background_color: 背景颜色
+    :param vertical: 是否垂直排列
+    :param strong: 是否加粗
+    :param oblique: 是否斜体
+    :param underline: 是否下划线
+    :param wrap_width: 自动换行的最大宽度，None 表示不换
+    :param line_height: 行距系数，1.0 为单倍行距
+    :return: UIElement
     """
     if wrap_width:
         surf = TextRenderer.render_wrapped(
@@ -398,39 +436,285 @@ def create_image(path: str, size: Optional[Tuple[int, int]] = None) -> UIElement
     surf = load_image(path, size)
     return UIElement(surf)
 
-# ---------- 使用示例 （放在 if __name__ == "__main__" 中测试）----------
-if __name__ == "__main__":
-    pygame.init()
-    screen = pygame.display.set_mode((800, 600))
-    clock = pygame.time.Clock()
+class InputBox(UIElement):
+    """
+    单行文本输入框，支持：
+    - 鼠标点击激活/失活
+    - 键盘输入字符（可限制字符类型）
+    - 左右箭头移动光标，Home/End，Backspace，Delete
+    - 密码模式（显示为*）
+    - 占位符文本（未激活且无内容时显示）
+    - 最大长度限制
+    - 光标自动滚动（当光标超出可视区域时）
+    - 光标闪烁
+    """
+    _focused_instance = None   # 类变量焦点管理
+    def __init__(
+        self,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        font_style: str = "黑体",
+        font_size: int = 24,
+        text_color: Tuple[int, int, int] = BLACK,
+        bg_color: Tuple[int, int, int, int] = (255, 255, 255, 255),
+        border_color: Tuple[int, int, int] = (100, 100, 100),
+        border_width: int = 2,
+        active_border_color: Tuple[int, int, int] = (0, 100, 200),
+        placeholder: str = "",
+        placeholder_color: Tuple[int, int, int] = (150, 150, 150),
+        max_length: int = 100,
+        password_char: str = None,
+        allowed_chars: str = None,   # 例如 "0123456789" 只允许数字，None 表示允许所有可打印字符
+        z: int = 0,
+    ):
+        """
+        :param placeholder: 占位文字（输入框为空且未激活时显示）
+        :param password_char: 密码掩码字符，如果为 None 则显示真实文本
+        :param allowed_chars: 允许输入的字符集，None 表示允许所有可打印字符（不包括控制键）
+        """
+        self.width = width
+        self.height = height
+        self.font_style = font_style
+        self.font_size = font_size
+        self.text_color = text_color
+        self.bg_color = bg_color
+        self.border_color = border_color
+        self.border_width = border_width
+        self.active_border_color = active_border_color
+        self.placeholder = placeholder
+        self.placeholder_color = placeholder_color
+        self.max_length = max_length
+        self.password_char = password_char
+        self.allowed_chars = allowed_chars
 
-    # 创建滚动视图
-    scroll = ScrollView((400, 300), x=100, y=100, bg_color=(200, 200, 200, 255))
-    # 添加一些文字和按钮
-    text_elem = create_text(
-        "这是一个很长的文本示例，用来测试自动换行功能。我们希望这段文字能够在滚动区域内正确显示并且支持鼠标滚轮。",
-        "黑体", BLACK, 20,
-        wrap_width=380,
-        background_color=(255, 255, 255, 200),
-        stroke_size=1,
-        stroke_color=(0,0,0,100)
-    )
-    scroll.add(text_elem, 10, 10)
+        # 文本缓冲区
+        self.text = ""           # 真实文本（未掩码）
+        self.cursor_pos = 0      # 光标位置（字符索引）
+        self.active = False      # 是否激活
+        self.cursor_visible = True
+        self.last_blink_time = time()
+        self.blink_interval = 0.5  # 光标闪烁间隔（秒）
 
-    btn = Button("点我", font_size=18, bg_image_path="assets/images/board.png")
-    btn.set_callback(lambda: print("按钮被点击"))
-    scroll.add(btn, 10, 100)
+        # 滚动偏移（像素）
+        self.scroll_offset = 0
 
-    running = True
-    while running:
-        for event in pygame.event.get():
-            if event.type == QUIT:
-                running = False
-            scroll.handle_event(event)  # 传递事件给滚动区域
+        # 创建表面
+        surface = self._create_surface()
+        super().__init__(surface, x, y, z)
 
-        screen.fill((150, 150, 150))
-        scroll.draw(screen)
-        pygame.display.flip()
-        clock.tick(60)
+        # 加载字体（用于测量文本宽度）
+        pygame.freetype.init()
+        font_path = FONT_PATH.get(font_style, None)
+        if not font_path or not Path(font_path).exists():
+            self.font = pygame.freetype.Font(None, font_size)
+        else:
+            self.font = pygame.freetype.Font(font_path, font_size)
 
-    pygame.quit()
+    def _create_surface(self) -> pygame.Surface:
+        """创建输入框的背景表面（包含背景色和边框）"""
+        surf = create_transparent_surface((self.width, self.height), self.bg_color)
+        # 绘制边框
+        border_clr = self.active_border_color if self.active else self.border_color
+        pygame.draw.rect(surf, border_clr, surf.get_rect(), self.border_width)
+        return surf
+
+    def _get_display_text(self) -> str:
+        """获取用于显示的文本（如果是密码模式则返回掩码）"""
+        if self.password_char and self.password_char is not None:
+            return self.password_char * len(self.text)
+        return self.text
+
+    def _get_text_surface(self) -> pygame.Surface:
+        """渲染当前显示的文本（带缓存，但每次文本改变都会重新调用）"""
+        display_text = self._get_display_text()
+        if not display_text and not self.active and self.placeholder:
+            # 显示占位符
+            return TextRenderer.render(
+                self.placeholder, self.font_style, self.font_size,
+                self.placeholder_color, background=TRANSPARENT
+            )
+        return TextRenderer.render(
+            display_text, self.font_style, self.font_size,
+            self.text_color, background=TRANSPARENT
+        )
+
+    def _update_surface(self):
+        """重新生成输入框表面（文本 + 背景 + 光标）"""
+        # 重新创建基础背景（因为激活状态边框颜色可能改变）
+        self.image = self._create_surface()
+        # 计算文本绘制区域（留出左右内边距，避免太靠边）
+        padding = 8
+        text_area_width = self.width - 2 * padding
+        text_surf = self._get_text_surface()
+        text_width = text_surf.get_width()
+
+        # 水平滚动：确保光标在可视区域内
+        # 光标位置像素（基于当前文本）
+        display_text = self._get_display_text()
+        if self.cursor_pos == 0:
+            cursor_pixel = 0
+        else:
+            # 获取光标前子串的宽度
+            prefix = display_text[:self.cursor_pos]
+            if prefix:
+                # 临时测量宽度
+                prefix_surf = TextRenderer.render(
+                    prefix, self.font_style, self.font_size,
+                    self.text_color, background=TRANSPARENT
+                )
+                cursor_pixel = prefix_surf.get_width()
+            else:
+                cursor_pixel = 0
+
+        # 滚动调整：让光标出现在 text_area_width 内
+        if cursor_pixel < self.scroll_offset:
+            self.scroll_offset = cursor_pixel
+        elif cursor_pixel > self.scroll_offset + text_area_width:
+            self.scroll_offset = cursor_pixel - text_area_width
+        # 避免滚动过头（比如文本很短时滚动不应为负）
+        self.scroll_offset = max(0, min(self.scroll_offset, max(0, text_width - text_area_width)))
+
+        # 裁剪文本区域（只绘制可视部分）
+        clip_rect = pygame.Rect(padding, 0, text_area_width, self.height)
+        # 将文本表面绘制到 image 上，考虑滚动偏移
+        x_pos = padding - self.scroll_offset
+        y_pos = (self.height - text_surf.get_height()) // 2
+        self.image.blit(text_surf, (x_pos, y_pos))
+
+        # 绘制光标（仅在激活状态且光标闪烁可见）
+        if self.active and self.cursor_visible:
+            # 计算光标位置（基于当前滚动偏移）
+            cursor_x = padding + cursor_pixel - self.scroll_offset
+            if 0 <= cursor_x <= self.width - 2:
+                cursor_height = int(self.font.get_sized_height() * 0.7)
+                cursor_y = (self.height - cursor_height) // 2
+                pygame.draw.rect(self.image, self.text_color, (cursor_x, cursor_y, 2, cursor_height))
+
+    def handle_event(self, event: pygame.event.Event, offset_x: int = 0, offset_y: int = 0) -> bool:
+        if not self.enabled or not self.visible:
+            return False
+
+        # 计算全局鼠标位置下的点击检测
+        if event.type == MOUSEBUTTONDOWN and event.button == 1:
+            local_pos = (event.pos[0] - offset_x, event.pos[1] - offset_y)
+            if self.rect.collidepoint(local_pos):
+                # 让其他输入框失活
+                if InputBox._focused_instance and InputBox._focused_instance != self:
+                    InputBox._focused_instance.active = False
+                    InputBox._focused_instance._update_surface()
+                self.active = True
+                InputBox._focused_instance = self
+                # 开启文本输入和按键重复
+                pygame.key.start_text_input()
+                pygame.key.set_repeat(500, 30)   # 延迟500ms后每30ms重复
+                self._update_surface()
+                return True
+            else:
+                if self.active:
+                    self.active = False
+                    if InputBox._focused_instance == self:
+                        InputBox._focused_instance = None
+                    # 关闭文本输入（可选）
+                    pygame.key.stop_text_input()
+                    pygame.key.set_repeat(0)   # 关闭重复
+                    self._update_surface()
+                return False
+
+        # 只有激活状态才处理键盘事件
+        if self.active:
+                # 修复2：优先处理 TEXTINPUT 事件
+                if event.type == TEXTINPUT:
+                    filtered = self._filter_text(event.text)
+                    if filtered and len(self.text) + len(filtered) <= self.max_length:
+                        self.text = self.text[:self.cursor_pos] + filtered + self.text[self.cursor_pos:]
+                        self.cursor_pos += len(filtered)
+                        self._update_surface()
+                    return True
+
+                elif event.type == KEYDOWN:
+                    self._handle_keydown(event)
+                    self._update_surface()
+                    return True
+
+        # 光标闪烁计时（非事件驱动，但为了简单，在更新中处理也可以，这里放在 handle_event 只是为了统一）
+        # 实际闪烁应该在 update 中处理，但为了避免每帧调用，可以单独提供一个 update 方法。
+        return False
+
+    def _handle_keydown(self, event):
+        """处理按键"""
+        key = event.key
+        mod = event.mod
+
+        # 处理退格
+        if key == K_BACKSPACE:
+            if self.cursor_pos > 0:
+                self.text = self.text[:self.cursor_pos-1] + self.text[self.cursor_pos:]
+                self.cursor_pos -= 1
+        # 删除
+        elif key == K_DELETE:
+            if self.cursor_pos < len(self.text):
+                self.text = self.text[:self.cursor_pos] + self.text[self.cursor_pos+1:]
+        # 左箭头
+        elif key == K_LEFT:
+            self.cursor_pos = max(0, self.cursor_pos - 1)
+        # 右箭头
+        elif key == K_RIGHT:
+            self.cursor_pos = min(len(self.text), self.cursor_pos + 1)
+        # Home
+        elif key == K_HOME:
+            self.cursor_pos = 0
+        # End
+        elif key == K_END:
+            self.cursor_pos = len(self.text)
+        # 回车（可自定义提交行为，这里仅失活）
+        elif key == K_RETURN or key == K_KP_ENTER:
+            self.active = False
+        # Ctrl+V 粘贴（简单实现，需要 pygame 支持获取剪贴板）
+        elif key == K_v and (mod & KMOD_CTRL):
+            # 注意：pygame 2.0+ 支持 pygame.scrap 模块，这里演示简单方式
+            try:
+                import pygame.scrap
+                pygame.scrap.init()
+                clipboard = pygame.scrap.get(pygame.SCRAP_TEXT).decode('utf-8')
+                # 过滤合法字符
+                filtered = self._filter_text(clipboard)
+                if len(self.text) + len(filtered) <= self.max_length:
+                    self.text = self.text[:self.cursor_pos] + filtered + self.text[self.cursor_pos:]
+                    self.cursor_pos += len(filtered)
+            except:
+                pass
+
+    def _filter_text(self, text: str) -> str:
+        """根据 allowed_chars 过滤文本"""
+        if self.allowed_chars is None:
+            return text
+        return ''.join(ch for ch in text if ch in self.allowed_chars)
+
+    def update(self, dt: float):
+        """需要每帧调用来更新光标闪烁和重绘（可选）"""
+        if self.active:
+            now = time()
+            if now - self.last_blink_time >= self.blink_interval:
+                self.cursor_visible = not self.cursor_visible
+                self.last_blink_time = now
+                self._update_surface()
+
+    def draw(self, screen: pygame.Surface, offset_x: int = 0, offset_y: int = 0):
+        """确保绘制前表面是最新的"""
+        # 每次绘制前主动更新（确保文本变化后重绘）
+        self._update_surface()
+        super().draw(screen, offset_x, offset_y)
+
+    def get_text(self) -> str:
+        return self.text
+
+    def set_text(self, text: str):
+        """设置文本内容，光标置于末尾"""
+        self.text = text[:self.max_length]
+        self.cursor_pos = len(self.text)
+        self._update_surface()
+
+    def clear(self):
+        self.set_text("")
