@@ -1,0 +1,5 @@
+SCREEN_WIDE = 1300
+SCREEN_HIGH = 800
+SCREEN_SIZE = (SCREEN_WIDE, SCREEN_HIGH)
+
+BACKGROUND_IMAGE_PATH = r'assets\images\background.png'  # 背景图片路径
