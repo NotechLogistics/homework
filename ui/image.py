@@ -17,6 +17,7 @@ BLACK = (0, 0, 0)
 BLUE = (52, 72, 120)
 GREEN = (25, 149, 0)
 RED = (255, 0, 0)
+YELLOW = (255, 255, 128)
 WHITE = (255, 255, 255)
 
 # ---------- 简单图片加载函数（无状态） ----------
@@ -212,6 +213,9 @@ class UIElement:
                 self.on_click()
                 return True
         return False
+    def update(self, dt):
+        """更新状态，dt为距离上次调用的秒数，子类可重写"""
+        pass
 
     def on_click(self):
         """点击回调，子类重写"""
@@ -224,12 +228,12 @@ class UIElement:
         self.rect.center = (x, y)
 
 class Button(UIElement):
-    """带文本的按钮"""
     def __init__(
         self,
         text: str,
         x: int = 0,
         y: int = 0,
+        size: Optional[Tuple[int, int]] = None,   # 新增参数：固定按钮尺寸
         font_style: str = "黑体",
         font_size: int = 20,
         text_color: Tuple[int, int, int] = BLACK,
@@ -237,31 +241,32 @@ class Button(UIElement):
         padding: int = 10,
         z: int = 0,
     ):
-        """
-        :param text: 按钮文本
-        :param x: 左上角 x 坐标
-        :param y: 左上角 y 坐标
-        :param font_style: 字体样式
-        :param font_size: 字体大小
-        :param text_color: 字体颜色
-        :param bg_image_path: 背景图片路径，图片会被缩放以适应文本尺寸 + 内边距
-        :param padding: 文本与按钮边缘的内边距 
-        :param z: 层级（越大越靠前）
-        """
         # 渲染文本
         text_surf = TextRenderer.render(text, font_style, font_size, text_color)
-        # 加载背景图片，尺寸适配文本 + 内边距
-        bg_surf = load_image(bg_image_path)
-        width = text_surf.get_width() + 2 * padding
-        height = text_surf.get_height() + 2 * padding
-        if bg_surf.get_size() != (width, height):
-            bg_surf = pygame.transform.smoothscale(bg_surf, (width, height))
 
-        # 合成最终按钮表面
-        final = bg_surf.copy()
-        text_x = (width - text_surf.get_width()) // 2
-        text_y = (height - text_surf.get_height()) // 2
-        final.blit(text_surf, (text_x, text_y))
+        if size is not None:
+            # 固定尺寸模式
+            width, height = size
+            # 加载背景并缩放到固定尺寸
+            bg_surf = load_image(bg_image_path)
+            bg_surf = pygame.transform.smoothscale(bg_surf, (width, height))
+            # 创建最终按钮表面
+            final = bg_surf.copy()
+            # 文本居中（若文本超出尺寸，会被裁剪，调用者需确保足够空间）
+            text_x = (width - text_surf.get_width()) // 2
+            text_y = (height - text_surf.get_height()) // 2
+            final.blit(text_surf, (text_x, text_y))
+        else:
+            # 自动尺寸模式（原有逻辑）
+            bg_surf = load_image(bg_image_path)
+            width = text_surf.get_width() + 2 * padding
+            height = text_surf.get_height() + 2 * padding
+            if bg_surf.get_size() != (width, height):
+                bg_surf = pygame.transform.smoothscale(bg_surf, (width, height))
+            final = bg_surf.copy()
+            text_x = (width - text_surf.get_width()) // 2
+            text_y = (height - text_surf.get_height()) // 2
+            final.blit(text_surf, (text_x, text_y))
 
         super().__init__(final, x, y, z)
         self.callback = None
@@ -718,3 +723,207 @@ class InputBox(UIElement):
 
     def clear(self):
         self.set_text("")
+
+from typing import List, Optional, Tuple, Callable
+
+class FormPanel(UIElement):
+    """
+    表单面板：包含多个带标签的输入框和多个按钮。
+    所有子控件绘制在一个透明表面上，可整体移动。
+    """
+    def __init__(
+        self,
+        x: int, y: int,
+        panel_width: int,
+        input_labels: List[str],          # 文本框前面的标题文本列表
+        input_defaults: Optional[List[str]] = None,  # 输入框默认文本（可选）
+        button_texts: Optional[List[str]] = None,    # 按钮文字列表
+        button_callbacks: Optional[List[Callable]] = None,  # 按钮回调函数列表
+        label_font_style: str = "黑体",
+        label_font_size: int = 20,
+        label_color: Tuple[int, int, int] = BLACK,
+        input_font_style: str = "黑体",
+        input_font_size: int = 20,
+        input_text_color: Tuple[int, int, int] = BLACK,
+        input_bg_color: Tuple[int, int, int, int] = (255,255,255,255),
+        input_border_color: Tuple[int, int, int] = (100,100,100),
+        input_active_border_color: Tuple[int, int, int] = (0,100,200),
+        input_height: int = 35,
+        input_password_char: Optional[str] = None,
+        password_flags: Optional[List[bool]] = None,
+        button_font_style: str = "黑体",
+        button_font_size: int = 20,
+        button_text_color: Tuple[int, int, int] = WHITE,
+        button_bg_image: str = "assets/images/board.png",  # 按钮背景图
+        button_padding: int = 10,
+        label_input_gap: int = 5,          # 标题与输入框的间距（像素）
+        row_gap: int = 15,                 # 行间距（上一行输入框与下一行标题的间距）
+        button_gap: int = 20,              # 按钮之间的间距
+        margin_left: int = 20,             # 左边距
+        margin_top: int = 20,              # 上边距
+        background_color: Tuple[int, int, int, int] = (240,240,240,200),  # 面板背景色（半透）
+        border_width: int = 2,
+        border_color: Tuple[int, int, int] = (100,100,100),
+        z: int = 0,
+    ):
+        # 保存参数
+        self.panel_width = panel_width
+        self.input_labels = input_labels
+        self.input_defaults = input_defaults or [""] * len(input_labels)
+        self.button_texts = button_texts or []
+        self.button_callbacks = button_callbacks or []
+        self.label_font_style = label_font_style
+        self.label_font_size = label_font_size
+        self.label_color = label_color
+        self.input_font_style = input_font_style
+        self.input_font_size = input_font_size
+        self.input_text_color = input_text_color
+        self.input_bg_color = input_bg_color
+        self.input_border_color = input_border_color
+        self.input_active_border_color = input_active_border_color
+        self.input_height = input_height
+        self.input_password_char = input_password_char
+        self.button_font_style = button_font_style
+        self.button_font_size = button_font_size
+        self.button_text_color = button_text_color
+        self.button_bg_image = button_bg_image
+        self.button_padding = button_padding
+        self.label_input_gap = label_input_gap
+        self.row_gap = row_gap
+        self.button_gap = button_gap
+        self.margin_left = margin_left
+        self.margin_top = margin_top
+        self.background_color = background_color
+        self.border_width = border_width
+        self.border_color = border_color
+        self.password_flags = password_flags or [False] * len(input_labels)
+
+        # 计算面板总高度
+        self.input_boxes = []      # 存储 InputBox 实例
+        self.labels = []           # 存储标题的 UIElement
+        self.buttons = []          # 存储 Button 实例
+
+        y_offset = margin_top
+        # 创建每一行：标签 + 输入框
+        for i, label_text in enumerate(input_labels):
+            # 创建标签（静态文本）
+            label = create_text(
+                label_text, label_font_style, label_color, label_font_size,
+                background_color=TRANSPARENT
+            )
+            # 标签放在左边
+            label.set_position(margin_left, y_offset)
+            self.labels.append(label)
+
+            # 输入框宽度 = 面板宽度 - 左边距 - 右边距（右边距固定20）
+            input_width = panel_width - margin_left - 20
+            # 输入框放在标签下方（垂直排列），所以标签和输入框是上下关系
+            # 标签底部到输入框顶部有 label_input_gap 间距
+            input_y = y_offset + label.image.get_height() + label_input_gap
+            is_password = self.password_flags[i] if i < len(self.password_flags) else False
+            pwd_char = input_password_char if is_password else None
+            input_box = InputBox(
+                x=margin_left, y=input_y, width=input_width, height=input_height,
+                font_style=input_font_style, font_size=input_font_size,
+                text_color=input_text_color, bg_color=input_bg_color,
+                border_color=input_border_color, active_border_color=input_active_border_color,
+                placeholder="", max_length=100,password_char=pwd_char,
+                allowed_chars=None, z=z+1  # 确保输入框在面板之上（便于点击）
+            )
+            input_box.set_text(self.input_defaults[i])
+            self.input_boxes.append(input_box)
+
+            # 更新 y_offset 到本行底部（输入框底部）
+            y_offset = input_y + input_height + row_gap
+
+        # 创建按钮区域（水平排列或垂直排列，这里水平居中排列）
+        if button_texts:
+            # 计算按钮总宽度
+            btn_widths = []
+            for btn_text in button_texts:
+                # 临时计算按钮文本宽度
+                font = pygame.freetype.Font(FONT_PATH.get(button_font_style, None), button_font_size)
+                text_rect = font.get_rect(btn_text)
+                btn_w = text_rect.width + 2 * button_padding
+                btn_widths.append(btn_w)
+            total_btns_width = sum(btn_widths) + max(0, len(button_texts)-1) * button_gap
+            start_x = margin_left + (panel_width - margin_left - 20 - total_btns_width) // 2
+            current_x = start_x
+            for i, btn_text in enumerate(button_texts):
+                btn = Button(
+                    text=btn_text, x=int(current_x), y=y_offset,
+                    font_style=button_font_style, font_size=button_font_size,
+                    text_color=button_text_color, bg_image_path=button_bg_image,
+                    padding=button_padding
+                )
+                if i < len(button_callbacks) and button_callbacks[i]:
+                    btn.set_callback(button_callbacks[i])
+                self.buttons.append(btn)
+                current_x += btn_widths[i] + button_gap
+            y_offset += self.buttons[0].rect.height + margin_top  # 增加底部留白
+
+        total_height = y_offset
+
+        # 创建面板表面
+        panel_surface = create_transparent_surface((panel_width, total_height), background_color)
+        # 绘制边框
+        pygame.draw.rect(panel_surface, border_color, panel_surface.get_rect(), border_width)
+
+        # 初始化 UIElement
+        super().__init__(panel_surface, x, y, z)
+
+        # 子控件列表（用于事件转发和绘制）
+        self._children = self.labels + self.input_boxes + self.buttons
+
+    def handle_event(self, event: pygame.event.Event, offset_x: int = 0, offset_y: int = 0) -> bool:
+        """将事件转发给子控件（需要将屏幕坐标转换为面板内相对坐标）"""
+        if not self.enabled or not self.visible:
+            return False
+
+        # 计算面板的全局偏移（面板自身的偏移 + 父容器传入的偏移）
+        panel_global_x = self.rect.x + offset_x
+        panel_global_y = self.rect.y + offset_y
+
+        # 先让输入框和按钮处理事件（按 z 降序，但这里简单按列表顺序即可）
+        # 注意：需要传递给子控件的偏移是面板全局偏移 + 子控件自身的位置已经在子控件的 rect 中体现
+        # 子控件的 rect 是相对于面板左上角的，所以它们的绝对坐标 = panel_global_xy + child.rect.topleft
+        # 因此在调用 child.handle_event 时，传入的偏移应该是 panel_global_xy
+        for child in self._children:
+            if child.handle_event(event, panel_global_x, panel_global_y):
+                return True
+        return False
+
+    def draw(self, screen: pygame.Surface, offset_x: int = 0, offset_y: int = 0):
+        """先绘制面板背景（自身 image），再绘制子控件到面板表面"""
+        if not self.visible:
+            return
+        # 绘制面板背景（边框等已在初始化时绘制，但如果有动态变化可重新绘制）
+        # 为了性能，我们不再重绘整个面板，而是直接将面板表面 blit 到屏幕
+        # 但是子控件需要绘制到面板表面上，而不是直接绘制到屏幕。
+        # 因此我们需要先清空面板表面，然后绘制所有子控件到面板表面，最后把面板表面 blit 到屏幕。
+        # 注意：面板表面是 self.image
+
+        # 清空面板表面（保留背景色和边框）
+        self.image.fill(self.background_color)
+        pygame.draw.rect(self.image, self.border_color, self.image.get_rect(), self.border_width)
+
+        # 将所有子控件绘制到面板表面上（不需要偏移，因为子控件的 rect 是相对于面板的）
+        for child in self._children:
+            # 子控件直接绘制到 self.image 上，位置即为 child.rect.topleft
+            child.draw(self.image)  # 注意：这里传入的是面板表面，不是屏幕
+
+        # 将面板表面绘制到屏幕
+        screen.blit(self.image, (self.rect.x + offset_x, self.rect.y + offset_y))
+
+    def get_input_values(self) -> List[str]:
+        """返回所有输入框的当前文本"""
+        return [ib.get_text() for ib in self.input_boxes]
+
+    def set_input_values(self, values: List[str]):
+        """设置所有输入框的文本"""
+        for ib, val in zip(self.input_boxes, values):
+            ib.set_text(val)
+    def clear_inputs(self):
+        """清空所有输入框"""
+        for ib in self.input_boxes:
+            ib.clear()

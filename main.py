@@ -1,5 +1,5 @@
 import pygame
-from ui import image,ui_manager,background
+from ui import image,ui_manager,background,login,register,main
 import os,sys
 import constant
 
@@ -9,6 +9,7 @@ class Main:
         self.screen = pygame.display.set_mode(constant.SCREEN_SIZE)
         self.clock = pygame.time.Clock()
         self.running = True
+        self.status = 'main'  # 当前状态，初始为登录界面
 
         # 创建ui管理器
         self.ui_manager = ui_manager.UIManager()
@@ -16,37 +17,23 @@ class Main:
         # 创建背景
         self.background = background.Background()
         self.ui_manager.add(self.background)  # 将背景图片添加到UI管理器中
+        
+        # 创建登录界面
+        self.login = login.Login()
+        self.login.change_to_register = self.change_to_register  # 设置注册按钮的回调函数
+        self.login.change_to_main = self.change_to_main  # 设置登录成功后切换到主界面的回调函数
 
-        # 创建普通输入框
-        name_input = image.InputBox(
-            x=100, y=100, width=250, height=40,
-            placeholder="请输入姓名",
-            max_length=20,
-            z=1
-        )
-        # 创建密码输入框
-        pwd_input = image.InputBox(
-            x=100, y=160, width=250, height=40,
-            placeholder="密码",
-            password_char="*",
-            max_length=16,
-            z=1
-        )
-        # 数字输入框
-        age_input = image.InputBox(
-            x=100, y=220, width=100, height=40,
-            placeholder="年龄",
-            allowed_chars="0123456789",
-            max_length=3,
-            z=1
-        )
+        # 创建注册界面
+        self.register = register.Register()  # 注册界面实例，初始为None
+        self.register.change_to_login = self.change_to_login  # 设置注册界面中切换回登录界面的回调函数
 
-        self.ui_manager.add(name_input)
-        self.ui_manager.add(pwd_input)
-        self.ui_manager.add(age_input)
-
+        # 创建主界面
+        self.main = main.Main()
+        self.main.change_to_store = self.change_to_store
+        
     def run(self):
         dt = self.clock.tick(60) / 1000.0    
+        
         while self.running:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -54,18 +41,44 @@ class Main:
                 self.ui_manager.handle_event(event)
             self.clock.tick(60)
 
-            for elem in self.ui_manager.elements:
-                if isinstance(elem, image.InputBox):
-                    elem.update(dt)
-
-            self.screen.fill(image.BLACK)
+            if self.status == 'login':
+                if self.login not in self.ui_manager.elements:
+                    self.ui_manager.add(self.login)
+            if self.status == 'register':
+                if self.register not in self.ui_manager.elements:
+                    self.ui_manager.add(self.register)
+            if self.status == 'main':
+                if self.main not in self.ui_manager.elements:
+                    self.ui_manager.add(self.main)
+            self.ui_manager.update(dt)
             self.ui_manager.draw(self.screen)
+
             pygame.display.flip()
 
         pygame.quit()
         sys.exit()
 
+    def change_to_register(self):
+        self.status = 'register'
 
+        self.ui_manager.elements.remove(self.login)  # 从UI管理器中移除登录界面
+    def change_to_main(self):
+        self.status = 'main'
+
+        self.ui_manager.elements.remove(self.login) # 从UI管理器中移除登录界面`
+        print("登录成功，切换到主界面")
+    def change_to_login(self):
+        self.status = 'login'
+
+        self.ui_manager.elements.remove(self.register)  # 从UI管理器中移除注册界面
+    def change_to_store(self):
+        self.status = 'store'
+
+        print("切换到商店界面")
+
+
+
+        
 if __name__ == "__main__":
     main = Main()
     main.run()

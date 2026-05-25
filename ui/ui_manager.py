@@ -22,6 +22,10 @@ class UIManager:
                         self.focused_input = elem
                 return True
         return False
+    def update(self, dt):
+        for elem in sorted(self.elements, key=lambda e: e.z):
+            if hasattr(elem, 'update'):
+                elem.update(dt)
 
     def draw(self, screen):
         # 绘制时也要按 z 升序（从低到高），否则高层的会被底层覆盖
