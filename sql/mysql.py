@@ -3,6 +3,10 @@ from pymysql.cursors import DictCursor
 from contextlib import contextmanager
 from typing import List, Dict, Any, Optional, Union
 import logging
+import hashlib
+import constant
+import time
+
 
 logger = logging.getLogger(__name__)
 
@@ -275,3 +279,34 @@ class MySQLHelper:
             order_by = 'win_rate'
         sql = f"SELECT user_id, username, level, total_games, win_games, win_rate, most_used_hero FROM player_profile ORDER BY {order_by} DESC LIMIT %s"
         return self.execute_query(sql, (limit,))
+    
+
+
+def login_check(db: 'MySQLHelper', username: str, password: str) -> bool:
+    db.get_connection()  # 获取数据库连接
+    md5_obj = hashlib.md5()
+    md5_obj.update(password.encode())
+    password = md5_obj.hexdigest()
+    result = db.execute_one("SELECT * FROM users WHERE username=%s AND password_hash=%s", (username, password))
+    print(result)
+    return result
+
+def register_check(db: 'MySQLHelper', username: str) -> bool:
+    db.get_connection()  # 获取数据库连接
+    result = db.execute_one("SELECT * FROM users WHERE username=%s", (username,))
+    return result is None
+
+def register_check(db: 'MySQLHelper', username: str, password: str) -> bool:
+    db.get_connection()  # 获取数据库连接
+    md5_obj = hashlib.md5()
+    md5_obj.update(password.encode())
+    password = md5_obj.hexdigest()
+    try:
+        result = db.execute_insert(
+            "INSERT INTO users (username, password_hash, icon,level,created_at,updated_at,coin) VALUES (%s, %s, %s, %s, %s, %s, %s)", 
+            (username, password, constant.ICON_DEFAULT_PATH, 1, time.strftime('%Y-%m-%d %H:%M:%S'), time.strftime('%Y-%m-%d %H:%M:%S')))
+    except Exception as e:
+        print(e)
+        return False
+    return result > 0
+    

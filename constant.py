@@ -11,3 +11,11 @@ LOGIN_TITLE_IMAGE_SIZE = (LOGIN_TITLE_IMAGE_WIDTH, LOGIN_TITLE_IMAGE_HEIGHT)
 GENERAL_IMAGE_PATH = r'assets\images\general'  # 通用图片路径
 USERBAR_IMAGE_PATH = r'assets\images\cards.png'  # 用户栏图片路径
 BOARD_IMAGE_PATH = r'assets\images\board.png'  # 用户信息板图片路径
+
+MYSQL_HOST="172.18.71.99"
+MYSQL_PORT=64588
+MYSQL_USER='root'
+MYSQL_PASSWORD='Zjiet@123-456'
+MYSQL_DATABASE='wws'
+
+ICON_DEFAULT_PATH = r'B07.png'  # 默认用户头像路径

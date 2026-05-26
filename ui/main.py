@@ -58,6 +58,7 @@ class UserBar(image.UIElement):
 class Main(image.UIElement):
     def __init__(self):
         super().__init__(image.create_transparent_surface(constant.SCREEN_SIZE,color=image.TRANSPARENT), z=0)
+
         self._children = []
         # 创建用户栏
         self.user_bar = UserBar()
@@ -66,7 +67,7 @@ class Main(image.UIElement):
         # 创建游戏开始按钮
         self.game_start_botton = Button("开始游戏", r'\B27.png', -210-105)
         self._children.append(self.game_start_botton)
-        
+
         # 创建商店按钮
         self.store_botton = Button("商店", r'\B24.png', 105)
         self.store_botton.set_callback(self.store_click)

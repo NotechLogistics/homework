@@ -2,6 +2,7 @@ import pygame
 from ui import image,ui_manager,background,login,register,main
 import os,sys
 import constant
+import sql.mysql
 
 class Main:
     def __init__(self):
@@ -9,7 +10,15 @@ class Main:
         self.screen = pygame.display.set_mode(constant.SCREEN_SIZE)
         self.clock = pygame.time.Clock()
         self.running = True
-        self.status = 'main'  # 当前状态，初始为登录界面
+        self.status = 'login'  # 当前状态，初始为登录界面
+        self.user_id = None  # 当前登录用户的ID
+        self.db = sql.mysql.MySQLHelper(
+            host=constant.MYSQL_HOST,
+            port=constant.MYSQL_PORT,
+            user=constant.MYSQL_USER,
+            password=constant.MYSQL_PASSWORD,
+            database=constant.MYSQL_DATABASE,
+        )  # 创建MySQL实例
 
         # 创建ui管理器
         self.ui_manager = ui_manager.UIManager()
@@ -19,12 +28,12 @@ class Main:
         self.ui_manager.add(self.background)  # 将背景图片添加到UI管理器中
         
         # 创建登录界面
-        self.login = login.Login()
+        self.login = login.Login(self.db)
         self.login.change_to_register = self.change_to_register  # 设置注册按钮的回调函数
         self.login.change_to_main = self.change_to_main  # 设置登录成功后切换到主界面的回调函数
 
         # 创建注册界面
-        self.register = register.Register()  # 注册界面实例，初始为None
+        self.register = register.Register(self.db)  # 注册界面实例，初始为None
         self.register.change_to_login = self.change_to_login  # 设置注册界面中切换回登录界面的回调函数
 
         # 创建主界面
@@ -64,9 +73,8 @@ class Main:
         self.ui_manager.elements.remove(self.login)  # 从UI管理器中移除登录界面
     def change_to_main(self):
         self.status = 'main'
-
+        self.user_id = self.login.user_id
         self.ui_manager.elements.remove(self.login) # 从UI管理器中移除登录界面`
-        print("登录成功，切换到主界面")
     def change_to_login(self):
         self.status = 'login'
 
@@ -77,8 +85,6 @@ class Main:
         print("切换到商店界面")
 
 
-
-        
 if __name__ == "__main__":
     main = Main()
     main.run()
